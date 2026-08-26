@@ -5,6 +5,8 @@ import {
   deriveStockStatus,
   findAlternatives,
   formatFreshness,
+  haversineMeters,
+  rankMachines,
 } from './domain'
 import type { InventoryReport, Product, VendingMachine } from './types'
 
@@ -201,5 +203,65 @@ describe('観測の信頼度', () => {
   it('観測がなければ登録情報を根拠として返す', () => {
     const assessment = assessStock(target, 'water', [], now)
     expect(assessment).toMatchObject({ basis: 'registered', confidence: 0 })
+  })
+})
+
+describe('検索結果の並び', () => {
+  it('2点間の距離をメートルで求める', () => {
+    // 緯度0.001度 ≒ 111m
+    expect(
+      haversineMeters({ lat: 35.63, lng: 139.79 }, { lat: 35.631, lng: 139.79 }),
+    ).toBe(111)
+  })
+
+  it('指定銘柄を扱わない自販機を除外する', () => {
+    const coffeeOnly: VendingMachine = {
+      ...machine('coffee-only', 50, 'available'),
+      stock: { coffee: 'available' },
+    }
+    const ranked = rankMachines([...machines, coffeeOnly], reports, 'water', undefined, now)
+    expect(ranked.map((item) => item.machine.id)).not.toContain('coffee-only')
+  })
+
+  it('在庫ありを未確認や売り切れより上位にする', () => {
+    const observed: InventoryReport[] = [
+      {
+        id: 'obs-1',
+        machineId: 'south-hall',
+        productId: 'water',
+        type: 'available',
+        observedAt: new Date(now.getTime() - 3 * 60_000).toISOString(),
+        source: 'user',
+      },
+      {
+        id: 'obs-2',
+        machineId: 'east-entrance',
+        productId: 'water',
+        type: 'sold_out',
+        observedAt: new Date(now.getTime() - 3 * 60_000).toISOString(),
+        source: 'user',
+      },
+    ]
+    const ranked = rankMachines(machines, observed, 'water', undefined, now)
+
+    // south-hall は最も遠いが、唯一「在庫あり」と観測されているので先頭に来る。
+    expect(ranked[0].machine.id).toBe('south-hall')
+    expect(ranked[0].status).toBe('available')
+    // east-entrance は最も近いが、売り切れと観測されているので最後になる。
+    expect(ranked[ranked.length - 1].machine.id).toBe('east-entrance')
+    expect(ranked[ranked.length - 1].status).toBe('sold_out')
+  })
+
+  it('現在地を渡すと実距離で近い順に並べ替える', () => {
+    const nearSouthHall = { lat: 35.6295, lng: 139.7905 }
+    const spread: VendingMachine[] = [
+      { ...machine('far', 10, 'available'), lat: 35.64, lng: 139.8 },
+      { ...machine('near', 900, 'available'), lat: 35.6296, lng: 139.7906 },
+    ]
+    const ranked = rankMachines(spread, [], 'water', nearSouthHall, now)
+
+    // 登録距離では far が近いが、現在地からの実距離では near が近い。
+    expect(ranked[0].machine.id).toBe('near')
+    expect(ranked[0].distanceMeters).toBeLessThan(ranked[1].distanceMeters)
   })
 })

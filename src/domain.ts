@@ -156,6 +156,77 @@ export function displayStatus(assessment: StockAssessment): StockStatus {
   return assessment.basis === 'registered' ? 'unknown' : assessment.status
 }
 
+export interface LatLng {
+  lat: number
+  lng: number
+}
+
+export function haversineMeters(a: LatLng, b: LatLng): number {
+  const earthRadius = 6_371_000
+  const toRad = (degrees: number) => (degrees * Math.PI) / 180
+  const dLat = toRad(b.lat - a.lat)
+  const dLng = toRad(b.lng - a.lng)
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2
+  return Math.round(2 * earthRadius * Math.asin(Math.sqrt(h)))
+}
+
+export interface MachineRanking {
+  machine: VendingMachine
+  assessment: StockAssessment
+  /** 表示用の状態。減衰済みは unknown。 */
+  status: StockStatus
+  distanceMeters: number
+}
+
+// 状態の差(1以上)が、近さと信頼度の差(合計±0.5)より必ず大きくなるようにしている。
+// つまり「買えるか」を最優先し、同じ状態のなかで近さと観測の確かさを比べる。
+const STATUS_SCORE: Record<StockStatus, number> = {
+  available: 3,
+  low: 2,
+  unknown: 1,
+  sold_out: 0,
+}
+const DISTANCE_SCORE_CAP_METERS = 1_000
+
+/**
+ * 指定銘柄を扱う自販機だけを、状態・近さ・観測の信頼度で並べる。
+ * origin が無い場合は登録時の距離を使う。
+ */
+export function rankMachines(
+  machines: VendingMachine[],
+  reports: InventoryReport[],
+  productId: ProductId,
+  origin?: LatLng,
+  now = new Date(),
+): MachineRanking[] {
+  return machines
+    .filter((machine) => productId in machine.stock)
+    .map((machine) => {
+      const assessment = assessStock(machine, productId, reports, now)
+      return {
+        machine,
+        assessment,
+        status: displayStatus(assessment),
+        distanceMeters: origin
+          ? haversineMeters(origin, machine)
+          : machine.distanceMeters,
+      }
+    })
+    .sort((a, b) => rankingScore(b) - rankingScore(a))
+}
+
+function rankingScore(ranking: MachineRanking): number {
+  const nearness =
+    1 - Math.min(ranking.distanceMeters, DISTANCE_SCORE_CAP_METERS) / DISTANCE_SCORE_CAP_METERS
+  return (
+    STATUS_SCORE[ranking.status] +
+    ranking.assessment.confidence * 0.5 +
+    nearness * 0.5
+  )
+}
+
 export function findAlternatives(
   machines: VendingMachine[],
   reports: InventoryReport[],

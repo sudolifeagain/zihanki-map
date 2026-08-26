@@ -23,6 +23,7 @@ import {
   fetchExperiences,
   fetchMachines,
   fetchReports,
+  geocodePlace,
   postExperience,
   postReports,
 } from './api'
@@ -32,7 +33,10 @@ import {
   findAlternatives,
   formatConfidence,
   formatFreshness,
+  haversineMeters,
+  rankMachines,
 } from './domain'
+import type { LatLng } from './domain'
 import type {
   InventoryReport,
   Product,
@@ -44,6 +48,62 @@ import type {
 
 type View = 'map' | 'insights'
 type DataStatus = 'loading' | 'ready' | 'error'
+type StatusFilter = StockStatus | 'all'
+type SearchState =
+  | { kind: 'idle' }
+  | { kind: 'searching' }
+  | { kind: 'done'; label: string }
+  | { kind: 'not_found' }
+  | { kind: 'busy' }
+  | { kind: 'error' }
+type LocationState =
+  | { kind: 'idle' }
+  | { kind: 'locating' }
+  | { kind: 'done' }
+  | { kind: 'denied' }
+  | { kind: 'unavailable' }
+
+const statusFilters: { value: StatusFilter; label: string }[] = [
+  { value: 'all', label: 'すべて' },
+  { value: 'available', label: '在庫あり' },
+  { value: 'low', label: '残りわずか' },
+  { value: 'sold_out', label: '売り切れ' },
+  { value: 'unknown', label: '未確認' },
+]
+
+function formatDistance(meters: number): string {
+  return meters >= 1000 ? `${(meters / 1000).toFixed(1)}km` : `${meters}m`
+}
+
+function searchMessage(state: SearchState): string | undefined {
+  switch (state.kind) {
+    case 'searching':
+      return '場所を検索しています…'
+    case 'done':
+      return `${state.label} を中心に表示しています`
+    case 'not_found':
+      return '該当する場所が見つかりませんでした。駅名や施設名を変えてお試しください'
+    case 'busy':
+      return '検索が混み合っています。数秒おいてからお試しください'
+    case 'error':
+      return '場所を検索できませんでした。通信状況を確認してください'
+    default:
+      return undefined
+  }
+}
+
+function locationMessage(state: LocationState): string | undefined {
+  switch (state.kind) {
+    case 'locating':
+      return '現在地を取得しています…'
+    case 'denied':
+      return '現在地が使えないため、施設名・駅名の検索をご利用ください'
+    case 'unavailable':
+      return '現在地を取得できませんでした。施設名・駅名の検索をご利用ください'
+    default:
+      return undefined
+  }
+}
 
 function publishErrorMessage(error: unknown): string {
   const reason = error instanceof ApiError ? error.message : ''
@@ -80,6 +140,12 @@ function App() {
   const [isPhotoFlowOpen, setIsPhotoFlowOpen] = useState(false)
   const [points, setPoints] = useState(120)
   const [toast, setToast] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [origin, setOrigin] = useState<LatLng>()
+  const [mapCenter, setMapCenter] = useState<LatLng>()
+  const [currentLocation, setCurrentLocation] = useState<LatLng>()
+  const [searchState, setSearchState] = useState<SearchState>({ kind: 'idle' })
+  const [locationState, setLocationState] = useState<LocationState>({ kind: 'idle' })
 
   const loadAll = useCallback(async () => {
     setDataStatus('loading')
@@ -159,10 +225,70 @@ function App() {
     selectedMachineId,
   )
 
-  const searchLocation = () => {
+  const rankings = rankMachines(machines, reports, selectedProductId, origin)
+  const originLabel =
+    locationState.kind === 'done'
+      ? '現在地からの距離順'
+      : origin
+        ? '検索地点からの距離順'
+        : '登録距離順'
+  const selectedDistanceMeters = origin
+    ? haversineMeters(origin, selectedMachine)
+    : selectedMachine.distanceMeters
+  const visibleRankings =
+    statusFilter === 'all'
+      ? rankings
+      : rankings.filter((ranking) => ranking.status === statusFilter)
+
+  // 規約でオートコンプリートが禁じられているため、明示的な検索操作のときだけ問い合わせる。
+  const searchLocation = async () => {
     const normalized = locationQuery.trim()
-    if (!normalized) setLocationQuery('東京ビッグサイト')
-    setToast('東京ビッグサイト周辺の登録済み自販機を表示しました')
+    if (!normalized) {
+      setSearchState({ kind: 'idle' })
+      return
+    }
+
+    setSearchState({ kind: 'searching' })
+    try {
+      const { place } = await geocodePlace(normalized)
+      setOrigin({ lat: place.lat, lng: place.lng })
+      setMapCenter({ lat: place.lat, lng: place.lng })
+      setSearchState({ kind: 'done', label: place.displayName.split(',')[0] })
+      setLocationState({ kind: 'idle' })
+    } catch (error) {
+      const reason = error instanceof ApiError ? error.message : ''
+      if (reason === 'place_not_found') setSearchState({ kind: 'not_found' })
+      else if (reason === 'geocode_busy') setSearchState({ kind: 'busy' })
+      else setSearchState({ kind: 'error' })
+    }
+  }
+
+  const useCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationState({ kind: 'unavailable' })
+      return
+    }
+
+    setLocationState({ kind: 'locating' })
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const here = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        }
+        setCurrentLocation(here)
+        setOrigin(here)
+        setMapCenter(here)
+        setLocationState({ kind: 'done' })
+        setSearchState({ kind: 'idle' })
+      },
+      (error) => {
+        setLocationState({
+          kind: error.code === error.PERMISSION_DENIED ? 'denied' : 'unavailable',
+        })
+      },
+      { enableHighAccuracy: true, timeout: 10_000 },
+    )
   }
 
   const publishPhotoReport = async (
@@ -230,16 +356,23 @@ function App() {
               selectedProduct={selectedProduct}
               selectedMachineId={selectedMachineId}
               onSelect={setSelectedMachineId}
+              center={mapCenter}
+              currentLocation={currentLocation}
             />
-            <div className="demo-badge"><span /> 東京ビッグサイト周辺・デモデータ</div>
+            <div className="demo-badge"><span /> 登録済み4台・デモデータ</div>
             <div className="map-result-card">
               <span>{selectedProduct.emoji}</span>
               <div>
                 <strong>{selectedProduct.shortName}</strong>
-                <small>確認済み在庫あり {machines.filter((machine) => displayStatus(assessStock(machine, selectedProductId, reports)) === 'available').length}台 / 登録 {machines.length}台</small>
+                <small>確認済み在庫あり {rankings.filter((ranking) => ranking.status === 'available').length}台 / 取扱 {rankings.length}台</small>
               </div>
             </div>
-            <button className="location-button" aria-label="現在地へ移動">
+            <button
+              className="location-button"
+              onClick={useCurrentLocation}
+              aria-label="現在地へ移動"
+              disabled={locationState.kind === 'locating'}
+            >
               <LocateFixed size={21} />
             </button>
           </section>
@@ -278,6 +411,15 @@ function App() {
               </label>
             </div>
 
+            {(searchMessage(searchState) || locationMessage(locationState)) && (
+              <p className={`finder-status${searchState.kind === 'not_found' || searchState.kind === 'error' || locationState.kind === 'denied' || locationState.kind === 'unavailable' ? ' is-warning' : ''}`} role="status">
+                {locationMessage(locationState) ?? searchMessage(searchState)}
+              </p>
+            )}
+            <p className="geocode-credit">
+              場所検索: OpenStreetMap / Nominatim
+            </p>
+
             <div className="product-chips" aria-label="商品を選択">
               {filteredProducts.map((product) => (
                 <button
@@ -289,6 +431,56 @@ function App() {
                 </button>
               ))}
               {filteredProducts.length === 0 && <small className="empty-products">該当する銘柄はありません</small>}
+            </div>
+
+            <div className="status-filters" aria-label="在庫状態で絞り込む">
+              {statusFilters.map((filter) => (
+                <button
+                  key={filter.value}
+                  className={statusFilter === filter.value ? 'selected' : ''}
+                  aria-pressed={statusFilter === filter.value}
+                  onClick={() => setStatusFilter(filter.value)}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="ranked-results">
+              <div className="ranked-results-head">
+                <strong>{selectedProduct.shortName}を扱う自販機 {visibleRankings.length}台</strong>
+                <small>{originLabel}・状態と信頼度で並べています</small>
+              </div>
+              {visibleRankings.length === 0 ? (
+                <p className="ranked-empty">
+                  条件に合う自販機がありません。状態の絞り込みを「すべて」に戻すか、別の銘柄・場所でお試しください。
+                </p>
+              ) : (
+                <ul>
+                  {visibleRankings.map((ranking) => (
+                    <li key={ranking.machine.id}>
+                      <button
+                        className={ranking.machine.id === selectedMachineId ? 'selected' : ''}
+                        onClick={() => setSelectedMachineId(ranking.machine.id)}
+                      >
+                        <span className={`ranked-status status-${ranking.status}`}>
+                          {statusCopy[ranking.status].label}
+                        </span>
+                        <span className="ranked-name">
+                          <strong>{ranking.machine.name}</strong>
+                          <small>
+                            {formatDistance(ranking.distanceMeters)}
+                            {ranking.assessment.basis === 'observation'
+                              ? ` ・信頼度${formatConfidence(ranking.assessment.confidence)} ・${formatFreshness(ranking.assessment.observedAt)}`
+                              : ' ・直近の確認なし'}
+                          </small>
+                        </span>
+                        <ChevronRight size={16} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             <section className="machine-card">
@@ -303,7 +495,7 @@ function App() {
                 </span>
                 <div className="machine-heading">
                   <div>
-                    <span className="distance"><Navigation size={13} /> 徒歩 約{Math.max(1, Math.round(selectedMachine.distanceMeters / 70))}分</span>
+                    <span className="distance"><Navigation size={13} /> {formatDistance(selectedDistanceMeters)}・徒歩 約{Math.max(1, Math.round(selectedDistanceMeters / 70))}分</span>
                     <h2>{selectedMachine.name}</h2>
                     <p>{selectedMachine.landmark}</p>
                   </div>

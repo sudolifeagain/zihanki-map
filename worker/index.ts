@@ -20,6 +20,7 @@ import {
   photoExists,
 } from './db'
 import type { Env } from './env'
+import { geocode } from './geocode'
 import { ALLOWED_PHOTO_TYPES, MAX_PHOTO_BYTES, putPhotoObject } from './photos'
 import { checkReportRateLimit, hashIp } from './rateLimit'
 import { resolveSessionId, sessionSetCookieHeader } from './session'
@@ -260,6 +261,24 @@ async function handleGetPhoto(env: Env, photoId: string): Promise<Response> {
   })
 }
 
+async function handleGetGeocode(env: Env, url: URL): Promise<Response> {
+  const query = url.searchParams.get('q')
+  if (!query || !query.trim()) return errorResponse(400, 'query_required')
+
+  const outcome = await geocode(env.DB, query)
+  switch (outcome.kind) {
+    case 'found':
+      return json({ place: outcome.result })
+    case 'not_found':
+      return errorResponse(404, 'place_not_found')
+    case 'busy':
+      // 上流の毎秒1リクエスト制限を守るため、間隔が足りないときは待ってもらう。
+      return errorResponse(429, 'geocode_busy')
+    default:
+      return errorResponse(502, 'geocode_unavailable')
+  }
+}
+
 async function handlePostAnalyze(env: Env, photoId: string): Promise<Response> {
   const photo = await getPhoto(env.DB, photoId)
   if (!photo) return errorResponse(404, 'photo_not_found')
@@ -293,6 +312,9 @@ async function routeApi(
 
   if (pathname === '/api/machines' && request.method === 'GET') {
     return handleGetMachines(env)
+  }
+  if (pathname === '/api/geocode' && request.method === 'GET') {
+    return handleGetGeocode(env, url)
   }
   if (pathname === '/api/reports' && request.method === 'GET') {
     return handleGetReports(env, url)

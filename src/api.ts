@@ -82,6 +82,16 @@ export async function uploadPhoto(
   return request('/api/photos', { method: 'POST', body: form })
 }
 
+export interface GeocodedPlace {
+  lat: number
+  lng: number
+  displayName: string
+}
+
+export async function geocodePlace(query: string): Promise<{ place: GeocodedPlace }> {
+  return request(`/api/geocode?q=${encodeURIComponent(query)}`)
+}
+
 export interface AnalysisCandidate {
   productId: ProductId | null
   detectedName: string

@@ -1,6 +1,8 @@
+import { useEffect } from 'react'
 import L from 'leaflet'
-import { MapContainer, Marker, TileLayer, ZoomControl } from 'react-leaflet'
+import { MapContainer, Marker, TileLayer, ZoomControl, useMap } from 'react-leaflet'
 import { assessStock, displayStatus } from '../domain'
+import type { LatLng } from '../domain'
 import type {
   InventoryReport,
   Product,
@@ -15,7 +17,29 @@ interface MapViewProps {
   selectedProduct: Product
   selectedMachineId: string
   onSelect: (machineId: string) => void
+  /** 検索や現在地でここへ移動する。 */
+  center?: LatLng
+  /** 現在地が取れているときだけ現在地マーカーを出す。 */
+  currentLocation?: LatLng
 }
+
+/** center が変わったら地図を寄せる。Leafletは宣言的に中心を変えられないため命令的に動かす。 */
+function RecenterOnChange({ center }: { center?: LatLng }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (center) map.flyTo([center.lat, center.lng], Math.max(map.getZoom(), 16))
+  }, [center, map])
+
+  return null
+}
+
+const currentLocationIcon = L.divIcon({
+  className: 'current-location-shell',
+  html: '<div class="current-location-dot" role="img" aria-label="現在地"></div>',
+  iconAnchor: [9, 9],
+  iconSize: [18, 18],
+})
 
 const markerLabel: Record<StockStatus, string> = {
   available: '在庫あり',
@@ -46,6 +70,8 @@ export default function MapView({
   selectedProduct,
   selectedMachineId,
   onSelect,
+  center,
+  currentLocation,
 }: MapViewProps) {
   const tileUrl =
     import.meta.env.VITE_MAP_TILE_URL ??
@@ -65,6 +91,14 @@ export default function MapView({
         url={tileUrl}
       />
       <ZoomControl position="bottomright" />
+      <RecenterOnChange center={center} />
+      {currentLocation && (
+        <Marker
+          position={[currentLocation.lat, currentLocation.lng]}
+          icon={currentLocationIcon}
+          title="現在地"
+        />
+      )}
       {machines.map((machine) => {
         const status = displayStatus(
           assessStock(machine, selectedProduct.id as ProductId, reports),
