@@ -45,7 +45,7 @@ npm run build
 | 欠品需要の集計 | 高度なAI需要予測 |
 | ベンダー向け補充提案のデモ | 自販機会社との本番API連携 |
 
-理由と実装ロードマップは [プロダクト計画](docs/PRODUCT_PLAN.md)、技術上の前提は [技術検討](docs/TECHNICAL_PLAN.md)、発表の流れは [デモ台本](docs/DEMO_SCRIPT.md) を参照してください。
+最初に共有されたビジネス検討と現在の仕様の対応は [要件定義・ビジネス検討記録](docs/REQUIREMENTS.md)、判断理由は [プロダクト計画](docs/PRODUCT_PLAN.md)、技術上の前提は [技術検討](docs/TECHNICAL_PLAN.md)、発表の流れは [デモ台本](docs/DEMO_SCRIPT.md) を参照してください。
 
 ## 構成
 
