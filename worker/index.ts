@@ -21,6 +21,7 @@ import {
 } from './db'
 import type { Env } from './env'
 import { ALLOWED_PHOTO_TYPES, MAX_PHOTO_BYTES, putPhotoObject } from './photos'
+import { checkReportRateLimit, hashIp } from './rateLimit'
 import { resolveSessionId, sessionSetCookieHeader } from './session'
 
 const REPORT_STATUSES = new Set<StockStatus>(['available', 'low', 'sold_out'])
@@ -129,11 +130,22 @@ async function handlePostReports(
 
   if (entries.length === 0) return errorResponse(400, 'no_reportable_statuses')
 
+  const ipHash = await hashIp(env, request)
+  const verdict = await checkReportRateLimit(env.DB, machineId, sessionId, ipHash)
+  if (!verdict.allowed) {
+    const response = errorResponse(429, verdict.reason ?? 'rate_limited')
+    if (verdict.retryAfterSeconds) {
+      response.headers.set('retry-after', String(verdict.retryAfterSeconds))
+    }
+    return response
+  }
+
   const reports = await insertReports(
     env.DB,
     machineId,
     entries,
     sessionId,
+    ipHash,
     typeof photoId === 'string' ? photoId : undefined,
   )
   return json({ reports }, 201)
@@ -182,6 +194,7 @@ async function handlePostExperiences(
       outcome: outcome as ExperienceOutcome,
     },
     sessionId,
+    await hashIp(env, request),
   )
   return json({ experience }, 201)
 }

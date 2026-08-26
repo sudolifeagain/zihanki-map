@@ -450,12 +450,35 @@ input:focus-visible {
   gap: 11px;
 }
 
-.machine-photo-row > img {
+.machine-photo {
+  position: relative;
+  display: block;
+  width: 54px;
+  height: 65px;
+}
+
+.machine-photo img {
   width: 54px;
   height: 65px;
   object-fit: cover;
   border-radius: 10px;
   background: #edeae3;
+}
+
+/* 撮影地と地図上の位置が一致しないデモ写真であることを明示する。 */
+.photo-location-warning {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 2px 0;
+  border-radius: 0 0 10px 10px;
+  background: rgba(23, 33, 29, 0.82);
+  color: #ffd9cf;
+  font-size: 8px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.02em;
 }
 
 .machine-photo-row .machine-heading {
@@ -579,6 +602,28 @@ input:focus-visible {
   color: #8b918e;
   font-size: 9px;
   white-space: nowrap;
+}
+
+.freshness svg {
+  flex: none;
+}
+
+.freshness-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-end;
+}
+
+/* 信頼度は在庫保証ではなく観測の確かさであることが伝わる控えめな表示にする。 */
+.freshness-confidence {
+  font-weight: 700;
+  color: #6f766f;
+}
+
+.freshness-unconfirmed {
+  color: #a3773a;
+  font-weight: 700;
 }
 
 .alternative-card {

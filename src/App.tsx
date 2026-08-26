@@ -18,12 +18,20 @@ import {
 import InsightsView from './components/InsightsView'
 import MapView from './components/MapView'
 import PhotoReportFlow from './components/PhotoReportFlow'
-import { fetchExperiences, fetchMachines, fetchReports, postExperience, postReports } from './api'
 import {
-  deriveStockStatus,
+  ApiError,
+  fetchExperiences,
+  fetchMachines,
+  fetchReports,
+  postExperience,
+  postReports,
+} from './api'
+import {
+  assessStock,
+  displayStatus,
   findAlternatives,
+  formatConfidence,
   formatFreshness,
-  latestReport,
 } from './domain'
 import type {
   InventoryReport,
@@ -36,6 +44,20 @@ import type {
 
 type View = 'map' | 'insights'
 type DataStatus = 'loading' | 'ready' | 'error'
+
+function publishErrorMessage(error: unknown): string {
+  const reason = error instanceof ApiError ? error.message : ''
+  if (reason === 'machine_cooldown') {
+    return 'この自販機へは直前に投稿があります。数分おいてからお試しください'
+  }
+  if (reason === 'hourly_limit') {
+    return '短時間の投稿が多いため受け付けを制限しました。しばらくお待ちください'
+  }
+  if (reason === 'writes_paused') {
+    return '現在、投稿の受け付けを一時停止しています'
+  }
+  return '投稿を送信できませんでした。もう一度お試しください'
+}
 
 const statusCopy: Record<StockStatus, { label: string; detail: string }> = {
   available: { label: '在庫あり', detail: '買える可能性が高い' },
@@ -127,16 +149,9 @@ function App() {
   const selectedMachine = machines.find(
     (machine) => machine.id === selectedMachineId,
   )!
-  const selectedStatus = deriveStockStatus(
-    selectedMachine,
-    selectedProductId,
-    reports,
-  )
-  const selectedLatestReport = latestReport(
-    reports,
-    selectedMachineId,
-    selectedProductId,
-  )
+  const assessment = assessStock(selectedMachine, selectedProductId, reports)
+  const selectedStatus = displayStatus(assessment)
+  const registeredStatus = selectedMachine.stock[selectedProductId] ?? 'unknown'
   const alternatives = findAlternatives(
     machines,
     reports,
@@ -174,8 +189,8 @@ function App() {
       setPoints((current) => current + 10)
       setIsPhotoFlowOpen(false)
       setToast('写真から商品ラインナップを更新しました +10pt')
-    } catch {
-      setToast('投稿を送信できませんでした。もう一度お試しください')
+    } catch (error) {
+      setToast(publishErrorMessage(error))
     }
   }
 
@@ -221,7 +236,7 @@ function App() {
               <span>{selectedProduct.emoji}</span>
               <div>
                 <strong>{selectedProduct.shortName}</strong>
-                <small>在庫あり {machines.filter((machine) => deriveStockStatus(machine, selectedProductId, reports) === 'available').length}台 / 登録 {machines.length}台</small>
+                <small>確認済み在庫あり {machines.filter((machine) => displayStatus(assessStock(machine, selectedProductId, reports)) === 'available').length}台 / 登録 {machines.length}台</small>
               </div>
             </div>
             <button className="location-button" aria-label="現在地へ移動">
@@ -278,7 +293,14 @@ function App() {
 
             <section className="machine-card">
               <div className="machine-photo-row">
-                <img src={selectedMachine.photoUrl} alt={`${selectedMachine.name}の自販機`} />
+                <span className="machine-photo">
+                  <img src={selectedMachine.photoUrl} alt={`${selectedMachine.name}の自販機`} />
+                  {!selectedMachine.photoLocationMatches && (
+                    <span className="photo-location-warning" title="この写真の撮影地は地図上の位置と一致しません">
+                      撮影地×
+                    </span>
+                  )}
+                </span>
                 <div className="machine-heading">
                   <div>
                     <span className="distance"><Navigation size={13} /> 徒歩 約{Math.max(1, Math.round(selectedMachine.distanceMeters / 70))}分</span>
@@ -299,12 +321,28 @@ function App() {
                   <strong>{selectedProduct.name}</strong>
                   <small>{selectedProduct.brand} ・ ¥{selectedProduct.price}</small>
                   <span className={`stock-copy text-${selectedStatus}`}>
-                    {statusCopy[selectedStatus].detail}
+                    {assessment.basis === 'registered'
+                      ? `登録は「${statusCopy[registeredStatus].label}」・直近の確認なし`
+                      : statusCopy[selectedStatus].detail}
                   </span>
                 </div>
                 <div className="freshness">
                   <Clock3 size={14} />
-                  <span>{formatFreshness(selectedLatestReport?.observedAt)}</span>
+                  {assessment.basis === 'observation' ? (
+                    <span className="freshness-detail">
+                      <span>{formatFreshness(assessment.observedAt)}</span>
+                      <span className="freshness-confidence">
+                        信頼度 {formatConfidence(assessment.confidence)}
+                        {assessment.agreeingReports > 1 && `・${assessment.agreeingReports}件一致`}
+                        {assessment.conflictingReports > 0 && `・相反${assessment.conflictingReports}件`}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="freshness-detail">
+                      <span className="freshness-unconfirmed">未確認</span>
+                      <span>登録時のラインナップ</span>
+                    </span>
+                  )}
                 </div>
               </div>
 

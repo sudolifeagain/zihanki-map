@@ -1,3 +1,8 @@
 # ローカル開発では投稿の書き込みをブロックしない。
 # コピーして .dev.vars として使う(.dev.vars はコミットしない)。
 WRITES_PAUSED=false
+
+# 投稿元IPをハッシュ化するための秘密ソルト。
+# 未設定でも動くが、その場合IPハッシュは保存せずセッション単位の制限のみになる。
+# 本番は `wrangler secret put IP_HASH_SALT` で設定する。
+IP_HASH_SALT=local-dev-only-salt

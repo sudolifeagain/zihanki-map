@@ -23,6 +23,8 @@ export interface VendingMachine {
   distanceMeters: number
   landmark: string
   photoUrl: string
+  /** 掲載写真の撮影地がこの座標と一致するか。false のデモ写真は画面上で明示する。 */
+  photoLocationMatches: boolean
   stock: Partial<Record<ProductId, StockStatus>>
 }
 

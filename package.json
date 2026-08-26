@@ -11,7 +11,9 @@
     "test:watch": "vitest",
     "preview": "vite preview",
     "db:migrate:local": "wrangler d1 migrations apply zihanki-map-db --local",
-    "db:migrate:remote": "wrangler d1 migrations apply zihanki-map-db --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply zihanki-map-db --remote",
+    "db:import": "node scripts/import-masters.mjs",
+    "db:import:remote": "node scripts/import-masters.mjs --remote"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

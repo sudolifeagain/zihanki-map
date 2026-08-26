@@ -7,7 +7,33 @@ import type {
   VendingMachine,
 } from './types'
 
-const FRESH_REPORT_MINUTES = 30
+/** 重みが半分になるまでの分数。30分で半減し、経過するほど観測を信用しない。 */
+export const CONFIDENCE_HALF_LIFE_MINUTES = 30
+/** これを下回った観測は「未確認」まで減衰したものとして扱う。 */
+export const MIN_CONFIDENCE = 0.2
+/** これより古い観測は集計対象から外す。 */
+const MAX_OBSERVATION_AGE_MINUTES = 180
+
+// 情報源ごとの重み。連携済みベンダー在庫を最も信頼する。
+const SOURCE_WEIGHT: Record<InventoryReport['source'], number> = {
+  vendor: 1,
+  user: 0.65,
+  demo: 0.65,
+}
+
+export interface StockAssessment {
+  status: StockStatus
+  /** 0〜1。表示は formatConfidence を使う。 */
+  confidence: number
+  /** 採用した観測のうち最新の時刻。登録情報のみの場合は undefined。 */
+  observedAt?: string
+  /** 採用した状態に一致した観測数。 */
+  agreeingReports: number
+  /** 採用した状態と食い違う観測数。 */
+  conflictingReports: number
+  /** observation=投稿・連携データによる観測、registered=登録時のラインナップ。 */
+  basis: 'observation' | 'registered'
+}
 
 export function minutesSince(isoDate: string, now = new Date()): number {
   return Math.max(
@@ -40,17 +66,94 @@ export function latestReport(
     )[0]
 }
 
+export function formatConfidence(confidence: number): string {
+  return `${Math.round(confidence * 100)}%`
+}
+
+/**
+ * 観測を `情報源の重み × 時間減衰` で加重し、状態ごとに合計して最も重い状態を採る。
+ * 一致する観測が多いほど、また新しいほど信頼度が上がり、食い違う観測があると下がる。
+ */
+export function assessStock(
+  machine: VendingMachine,
+  productId: ProductId,
+  reports: InventoryReport[],
+  now = new Date(),
+): StockAssessment {
+  const relevant = reports.filter(
+    (report) =>
+      report.machineId === machine.id &&
+      report.productId === productId &&
+      minutesSince(report.observedAt, now) <= MAX_OBSERVATION_AGE_MINUTES,
+  )
+
+  const weightByStatus = new Map<StockStatus, number>()
+  const countByStatus = new Map<StockStatus, number>()
+  const latestByStatus = new Map<StockStatus, string>()
+  let totalWeight = 0
+
+  for (const report of relevant) {
+    const decay =
+      0.5 ** (minutesSince(report.observedAt, now) / CONFIDENCE_HALF_LIFE_MINUTES)
+    const weight = SOURCE_WEIGHT[report.source] * decay
+
+    weightByStatus.set(report.type, (weightByStatus.get(report.type) ?? 0) + weight)
+    countByStatus.set(report.type, (countByStatus.get(report.type) ?? 0) + 1)
+    const previous = latestByStatus.get(report.type)
+    if (!previous || new Date(report.observedAt) > new Date(previous)) {
+      latestByStatus.set(report.type, report.observedAt)
+    }
+    totalWeight += weight
+  }
+
+  const registered: StockAssessment = {
+    status: machine.stock[productId] ?? 'unknown',
+    confidence: 0,
+    agreeingReports: 0,
+    conflictingReports: 0,
+    basis: 'registered',
+  }
+
+  if (totalWeight === 0) return registered
+
+  const [winnerStatus, winnerWeight] = [...weightByStatus.entries()].sort(
+    (a, b) => b[1] - a[1],
+  )[0]
+
+  // agreement: 食い違う観測がなければ1。evidence: 観測が新しく多いほど1に近づく。
+  const agreement = winnerWeight / totalWeight
+  const evidence = 1 - 0.5 ** (winnerWeight / SOURCE_WEIGHT.user)
+  const confidence = agreement * evidence
+
+  // 減衰しきった観測は在庫を保証しない。登録情報の表示に戻す。
+  if (confidence < MIN_CONFIDENCE) return registered
+
+  const agreeingReports = countByStatus.get(winnerStatus) ?? 0
+  return {
+    status: winnerStatus,
+    confidence,
+    observedAt: latestByStatus.get(winnerStatus),
+    agreeingReports,
+    conflictingReports: relevant.length - agreeingReports,
+    basis: 'observation',
+  }
+}
+
 export function deriveStockStatus(
   machine: VendingMachine,
   productId: ProductId,
   reports: InventoryReport[],
   now = new Date(),
 ): StockStatus {
-  const latest = latestReport(reports, machine.id, productId)
-  if (latest && minutesSince(latest.observedAt, now) <= FRESH_REPORT_MINUTES) {
-    return latest.type
-  }
-  return machine.stock[productId] ?? 'unknown'
+  return assessStock(machine, productId, reports, now).status
+}
+
+/**
+ * 画面に出す状態。登録時のラインナップしか根拠がない場合は「未確認」として扱い、
+ * 減衰した観測や未確認の在庫が「買える」と読めないようにする。
+ */
+export function displayStatus(assessment: StockAssessment): StockStatus {
+  return assessment.basis === 'registered' ? 'unknown' : assessment.status
 }
 
 export function findAlternatives(
@@ -60,11 +163,12 @@ export function findAlternatives(
   excludedMachineId: string,
   now = new Date(),
 ): VendingMachine[] {
+  // 登録情報だけの自販機は案内しない。実際に「在庫あり」と観測された機械に限る。
   return machines
     .filter(
       (machine) =>
         machine.id !== excludedMachineId &&
-        deriveStockStatus(machine, productId, reports, now) === 'available',
+        displayStatus(assessStock(machine, productId, reports, now)) === 'available',
     )
     .sort((a, b) => a.distanceMeters - b.distanceMeters)
 }

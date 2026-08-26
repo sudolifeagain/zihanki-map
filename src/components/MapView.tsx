@@ -1,6 +1,6 @@
 import L from 'leaflet'
 import { MapContainer, Marker, TileLayer, ZoomControl } from 'react-leaflet'
-import { deriveStockStatus } from '../domain'
+import { assessStock, displayStatus } from '../domain'
 import type {
   InventoryReport,
   Product,
@@ -66,10 +66,8 @@ export default function MapView({
       />
       <ZoomControl position="bottomright" />
       {machines.map((machine) => {
-        const status = deriveStockStatus(
-          machine,
-          selectedProduct.id as ProductId,
-          reports,
+        const status = displayStatus(
+          assessStock(machine, selectedProduct.id as ProductId, reports),
         )
         return (
           <Marker

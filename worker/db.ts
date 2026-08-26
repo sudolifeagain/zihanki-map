@@ -29,6 +29,7 @@ interface MachineRow {
   distance_meters: number
   landmark: string
   photo_url: string
+  photo_location_matches: number
 }
 
 interface MachineProductRow {
@@ -82,7 +83,9 @@ export async function listMachines(db: D1Database): Promise<VendingMachine[]> {
   const [{ results: machineRows }, { results: stockRows }, latestPhotoUrls] = await Promise.all([
     db
       .prepare(
-        'SELECT id, name, area, lat, lng, distance_meters, landmark, photo_url FROM vending_machines ORDER BY distance_meters',
+        // 非公開・撤去済み・重複登録は配信しない。
+        "SELECT id, name, area, lat, lng, distance_meters, landmark, photo_url, photo_location_matches " +
+          "FROM vending_machines WHERE status = 'active' ORDER BY distance_meters",
       )
       .all<MachineRow>(),
     db
@@ -106,7 +109,10 @@ export async function listMachines(db: D1Database): Promise<VendingMachine[]> {
     lng: row.lng,
     distanceMeters: row.distance_meters,
     landmark: row.landmark,
+    // 投稿写真があればそれを使う。投稿写真はその機械を撮ったものなので位置は一致する。
     photoUrl: latestPhotoUrls.get(row.id) ?? row.photo_url,
+    photoLocationMatches:
+      latestPhotoUrls.has(row.id) || row.photo_location_matches === 1,
     stock: stockByMachine.get(row.id) ?? {},
   }))
 }
@@ -145,6 +151,7 @@ export async function insertReports(
   machineId: string,
   entries: { productId: ProductId; status: Exclude<StockStatus, 'unknown'> }[],
   sessionId: string,
+  ipHash: string | undefined,
   photoId?: string,
 ): Promise<InventoryReport[]> {
   const observedAt = new Date().toISOString()
@@ -154,7 +161,7 @@ export async function insertReports(
     rows.map((row) =>
       db
         .prepare(
-          'INSERT INTO inventory_reports (id, machine_id, product_id, status, source, reporter_session_id, observed_at, photo_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO inventory_reports (id, machine_id, product_id, status, source, reporter_session_id, reporter_ip_hash, observed_at, photo_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )
         .bind(
           row.id,
@@ -163,6 +170,7 @@ export async function insertReports(
           row.status,
           'user',
           sessionId,
+          ipHash ?? null,
           observedAt,
           photoId ?? null,
         ),
@@ -274,13 +282,14 @@ export async function insertExperience(
     outcome: ExperienceOutcome
   },
   sessionId: string,
+  ipHash: string | undefined,
 ): Promise<PurchaseExperience> {
   const id = crypto.randomUUID()
   const observedAt = new Date().toISOString()
 
   await db
     .prepare(
-      'INSERT INTO purchase_experiences (id, machine_id, wanted_product_id, reason, outcome, reporter_session_id, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO purchase_experiences (id, machine_id, wanted_product_id, reason, outcome, reporter_session_id, reporter_ip_hash, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     )
     .bind(
       id,
@@ -289,6 +298,7 @@ export async function insertExperience(
       input.reason,
       input.outcome,
       sessionId,
+      ipHash ?? null,
       observedAt,
     )
     .run()

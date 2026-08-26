@@ -1,0 +1,5 @@
+id,name,area,lat,lng,distance_meters,landmark,photo_url,status,photo_location_matches
+east-entrance,東展示棟エントランス,東京ビッグサイト周辺（デモ）,35.63008,139.79576,80,入口を入って右手,/images/vending-machine-suntory.jpg,active,0
+conference-tower,会議棟 2Fロビー,東京ビッグサイト周辺（デモ）,35.63072,139.79382,210,エスカレーター横,/images/vending-machine-blue.jpg,active,0
+station-gate,駅前プロムナード,東京ビッグサイト周辺（デモ）,35.62964,139.79171,360,駅改札から会場方面へ50m,/images/vending-machine-suntory.jpg,active,0
+south-hall,南展示棟 1F,東京ビッグサイト周辺（デモ）,35.62871,139.79481,430,休憩スペース付近,/images/vending-machine-blue.jpg,active,0
