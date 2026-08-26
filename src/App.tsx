@@ -153,11 +153,13 @@ function App() {
   const publishPhotoReport = async (
     statuses: Partial<Record<ProductId, StockStatus>>,
     experience?: Omit<PurchaseExperience, 'id' | 'machineId' | 'observedAt'>,
+    photoId?: string,
   ) => {
     try {
       const { reports: newReports } = await postReports(
         selectedMachineId,
         statuses,
+        photoId,
       )
       setReports((current) => [...newReports, ...current])
 

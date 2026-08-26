@@ -79,7 +79,7 @@ export async function listProductIds(db: D1Database): Promise<Set<string>> {
 }
 
 export async function listMachines(db: D1Database): Promise<VendingMachine[]> {
-  const [{ results: machineRows }, { results: stockRows }] = await Promise.all([
+  const [{ results: machineRows }, { results: stockRows }, latestPhotoUrls] = await Promise.all([
     db
       .prepare(
         'SELECT id, name, area, lat, lng, distance_meters, landmark, photo_url FROM vending_machines ORDER BY distance_meters',
@@ -88,6 +88,7 @@ export async function listMachines(db: D1Database): Promise<VendingMachine[]> {
     db
       .prepare('SELECT machine_id, product_id, base_status FROM machine_products')
       .all<MachineProductRow>(),
+    latestPhotoUrlsByMachine(db),
   ])
 
   const stockByMachine = new Map<string, Partial<Record<ProductId, StockStatus>>>()
@@ -105,7 +106,7 @@ export async function listMachines(db: D1Database): Promise<VendingMachine[]> {
     lng: row.lng,
     distanceMeters: row.distance_meters,
     landmark: row.landmark,
-    photoUrl: row.photo_url,
+    photoUrl: latestPhotoUrls.get(row.id) ?? row.photo_url,
     stock: stockByMachine.get(row.id) ?? {},
   }))
 }
@@ -144,6 +145,7 @@ export async function insertReports(
   machineId: string,
   entries: { productId: ProductId; status: Exclude<StockStatus, 'unknown'> }[],
   sessionId: string,
+  photoId?: string,
 ): Promise<InventoryReport[]> {
   const observedAt = new Date().toISOString()
   const rows = entries.map((entry) => ({ id: crypto.randomUUID(), ...entry }))
@@ -152,9 +154,18 @@ export async function insertReports(
     rows.map((row) =>
       db
         .prepare(
-          'INSERT INTO inventory_reports (id, machine_id, product_id, status, source, reporter_session_id, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO inventory_reports (id, machine_id, product_id, status, source, reporter_session_id, observed_at, photo_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         )
-        .bind(row.id, machineId, row.productId, row.status, 'user', sessionId, observedAt),
+        .bind(
+          row.id,
+          machineId,
+          row.productId,
+          row.status,
+          'user',
+          sessionId,
+          observedAt,
+          photoId ?? null,
+        ),
     ),
   )
 
@@ -166,6 +177,71 @@ export async function insertReports(
     observedAt,
     source: 'user' as const,
   }))
+}
+
+interface PhotoRow {
+  id: string
+  machine_id: string
+}
+
+export async function latestPhotoUrlsByMachine(db: D1Database): Promise<Map<string, string>> {
+  const { results } = await db
+    .prepare('SELECT id, machine_id FROM photos ORDER BY created_at DESC')
+    .all<PhotoRow>()
+
+  const urlsByMachine = new Map<string, string>()
+  for (const row of results) {
+    if (!urlsByMachine.has(row.machine_id)) {
+      urlsByMachine.set(row.machine_id, `/api/photos/${row.id}`)
+    }
+  }
+  return urlsByMachine
+}
+
+export async function insertPhoto(
+  db: D1Database,
+  input: { machineId: string; objectKey: string; contentType: string; sizeBytes: number },
+  sessionId: string,
+): Promise<{ id: string; machineId: string; url: string; createdAt: string }> {
+  const id = crypto.randomUUID()
+  const createdAt = new Date().toISOString()
+
+  await db
+    .prepare(
+      'INSERT INTO photos (id, machine_id, object_key, content_type, size_bytes, reporter_session_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    )
+    .bind(id, input.machineId, input.objectKey, input.contentType, input.sizeBytes, sessionId, createdAt)
+    .run()
+
+  return { id, machineId: input.machineId, url: `/api/photos/${id}`, createdAt }
+}
+
+export async function getPhotoObjectKey(
+  db: D1Database,
+  photoId: string,
+): Promise<string | undefined> {
+  const row = await db
+    .prepare('SELECT object_key FROM photos WHERE id = ?')
+    .bind(photoId)
+    .first<{ object_key: string }>()
+  return row?.object_key
+}
+
+export async function getPhoto(
+  db: D1Database,
+  photoId: string,
+): Promise<{ machineId: string; objectKey: string; contentType: string } | undefined> {
+  const row = await db
+    .prepare('SELECT machine_id, object_key, content_type FROM photos WHERE id = ?')
+    .bind(photoId)
+    .first<{ machine_id: string; object_key: string; content_type: string }>()
+  if (!row) return undefined
+  return { machineId: row.machine_id, objectKey: row.object_key, contentType: row.content_type }
+}
+
+export async function photoExists(db: D1Database, photoId: string): Promise<boolean> {
+  const row = await db.prepare('SELECT 1 FROM photos WHERE id = ?').bind(photoId).first()
+  return row !== null
 }
 
 export async function listExperiences(

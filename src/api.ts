@@ -24,7 +24,14 @@ async function request<T>(input: string, init?: RequestInit): Promise<T> {
     throw new ApiError('network_error')
   }
   if (!response.ok) {
-    throw new ApiError(`http_${response.status}`)
+    let reason = `http_${response.status}`
+    try {
+      const body = (await response.json()) as { error?: string }
+      if (body.error) reason = body.error
+    } catch {
+      // JSON以外/空のエラーレスポンスはHTTPステータスのみで扱う
+    }
+    throw new ApiError(reason)
   }
   return (await response.json()) as T
 }
@@ -49,12 +56,44 @@ export async function fetchExperiences(): Promise<{
 export async function postReports(
   machineId: string,
   statuses: Partial<Record<ProductId, StockStatus>>,
+  photoId?: string,
 ): Promise<{ reports: InventoryReport[] }> {
   return request('/api/reports', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ machineId, statuses }),
+    body: JSON.stringify({ machineId, statuses, photoId }),
   })
+}
+
+export interface UploadedPhoto {
+  id: string
+  machineId: string
+  url: string
+  createdAt: string
+}
+
+export async function uploadPhoto(
+  machineId: string,
+  file: File,
+): Promise<{ photo: UploadedPhoto }> {
+  const form = new FormData()
+  form.append('machineId', machineId)
+  form.append('file', file)
+  return request('/api/photos', { method: 'POST', body: form })
+}
+
+export interface AnalysisCandidate {
+  productId: ProductId | null
+  detectedName: string
+  brand: string | null
+  status: StockStatus
+  confidence: number
+}
+
+export async function analyzePhoto(
+  photoId: string,
+): Promise<{ candidates: AnalysisCandidate[] }> {
+  return request(`/api/photos/${photoId}/analyze`, { method: 'POST' })
 }
 
 export async function postExperience(input: {

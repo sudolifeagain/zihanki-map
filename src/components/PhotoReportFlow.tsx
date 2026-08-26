@@ -9,6 +9,9 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
+import { analyzePhoto, uploadPhoto } from '../api'
+import type { AnalysisCandidate } from '../api'
+import { ALLOWED_PHOTO_TYPES, MAX_PHOTO_BYTES, PHOTO_RETENTION_DAYS } from '../photoPolicy'
 import type {
   ExperienceOutcome,
   ExperienceReason,
@@ -27,10 +30,12 @@ interface PhotoReportFlowProps {
   onPublish: (
     statuses: Partial<Record<ProductId, StockStatus>>,
     experience?: Omit<PurchaseExperience, 'id' | 'machineId' | 'observedAt'>,
+    photoId?: string,
   ) => Promise<void>
 }
 
 type Step = 'upload' | 'analyzing' | 'review'
+type AnalysisStatus = 'mock' | 'ai' | 'failed'
 
 const statusOptions: { value: StockStatus; label: string }[] = [
   { value: 'available', label: '在庫あり' },
@@ -49,6 +54,10 @@ export default function PhotoReportFlow({
   const [step, setStep] = useState<Step>('upload')
   const [isPublishing, setIsPublishing] = useState(false)
   const [uploadedImage, setUploadedImage] = useState<string>()
+  const [selectedFile, setSelectedFile] = useState<File>()
+  const [photoId, setPhotoId] = useState<string>()
+  const [photoError, setPhotoError] = useState<string>()
+  const [isUploading, setIsUploading] = useState(false)
   const [hasExperience, setHasExperience] = useState(false)
   const [wantedProductId, setWantedProductId] = useState(initialProductId)
   const [reason, setReason] = useState<ExperienceReason>('sold_out')
@@ -56,6 +65,13 @@ export default function PhotoReportFlow({
   const [statuses, setStatuses] = useState<
     Partial<Record<ProductId, StockStatus>>
   >(() => ({ ...machine.stock }))
+  const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('mock')
+  const [confidenceByProduct, setConfidenceByProduct] = useState<
+    Partial<Record<ProductId, number>>
+  >({})
+  const [unregisteredCandidates, setUnregisteredCandidates] = useState<
+    AnalysisCandidate[]
+  >([])
 
   const previewImage = uploadedImage ?? machine.photoUrl
   const detectedCount = useMemo(
@@ -76,13 +92,74 @@ export default function PhotoReportFlow({
 
   const handleFile = (file?: File) => {
     if (!file) return
+    setPhotoError(undefined)
+    if (!ALLOWED_PHOTO_TYPES.has(file.type)) {
+      setPhotoError('JPEG・PNG・WebPのいずれかを選んでください')
+      return
+    }
+    if (file.size > MAX_PHOTO_BYTES) {
+      setPhotoError('ファイルサイズが10MBを超えています')
+      return
+    }
     if (uploadedImage?.startsWith('blob:')) URL.revokeObjectURL(uploadedImage)
+    setSelectedFile(file)
+    setPhotoId(undefined)
     setUploadedImage(URL.createObjectURL(file))
   }
 
-  const startAnalysis = () => {
+  const startAnalysis = async () => {
+    let uploadedPhotoId = photoId
+    if (selectedFile) {
+      setIsUploading(true)
+      setPhotoError(undefined)
+      try {
+        const { photo } = await uploadPhoto(machine.id, selectedFile)
+        uploadedPhotoId = photo.id
+        setPhotoId(photo.id)
+      } catch {
+        setPhotoError('写真をアップロードできませんでした。もう一度お試しください')
+        setIsUploading(false)
+        return
+      }
+      setIsUploading(false)
+    }
+
     setStep('analyzing')
-    window.setTimeout(() => setStep('review'), 1800)
+
+    if (uploadedPhotoId) {
+      try {
+        const { candidates } = await analyzePhoto(uploadedPhotoId)
+        const nextStatuses: Partial<Record<ProductId, StockStatus>> = {}
+        const nextConfidence: Partial<Record<ProductId, number>> = {}
+        const unregistered: AnalysisCandidate[] = []
+        for (const product of products) nextStatuses[product.id] = 'unknown'
+        for (const candidate of candidates) {
+          if (candidate.productId) {
+            nextStatuses[candidate.productId] = candidate.status
+            nextConfidence[candidate.productId] = candidate.confidence
+          } else {
+            unregistered.push(candidate)
+          }
+        }
+        setStatuses(nextStatuses)
+        setConfidenceByProduct(nextConfidence)
+        setUnregisteredCandidates(unregistered)
+        setAnalysisStatus('ai')
+      } catch {
+        setStatuses({ ...machine.stock })
+        setConfidenceByProduct({})
+        setUnregisteredCandidates([])
+        setAnalysisStatus('failed')
+      }
+    } else {
+      await new Promise((resolve) => window.setTimeout(resolve, 1200))
+      setStatuses({ ...machine.stock })
+      setConfidenceByProduct({})
+      setUnregisteredCandidates([])
+      setAnalysisStatus('mock')
+    }
+
+    setStep('review')
   }
 
   const publish = async () => {
@@ -93,6 +170,7 @@ export default function PhotoReportFlow({
         hasExperience
           ? { wantedProductId, reason, outcome }
           : undefined,
+        photoId,
       )
     } finally {
       setIsPublishing(false)
@@ -152,11 +230,16 @@ export default function PhotoReportFlow({
                   onChange={(event) => handleFile(event.target.files?.[0])}
                 />
               </label>
-              <button className="primary-action" onClick={startAnalysis}>
-                <Sparkles size={18} /> この写真を解析する
+              <button className="primary-action" onClick={startAnalysis} disabled={isUploading}>
+                <Sparkles size={18} /> {isUploading ? 'アップロード中…' : 'この写真を解析する'}
               </button>
             </div>
-            <p className="mock-notice"><AlertCircle size={14} /> モックではサンプルの解析結果を表示します。写真は外部へ送信されません。</p>
+            {photoError && (
+              <p className="photo-error"><AlertCircle size={14} /> {photoError}</p>
+            )}
+            <p className="mock-notice">
+              <AlertCircle size={14} /> 写真を選ぶとAIが商品と状態を解析します(判定できない場合は手動入力にフォールバック)。選んだ写真は保存され、投稿から{PHOTO_RETENTION_DAYS}日で削除されます。人物が写り込まないよう注意してください。写真を選ばない場合はサンプル写真の解析モックで進みます。
+            </p>
           </div>
         )}
 
@@ -182,7 +265,13 @@ export default function PhotoReportFlow({
               <img src={previewImage} alt="解析した自販機" />
               <span className="summary-check"><CheckCircle2 size={20} /></span>
               <div>
-                <span className="eyebrow">AI ANALYSIS MOCK</span>
+                <span className="eyebrow">
+                  {analysisStatus === 'ai'
+                    ? 'AI ANALYSIS'
+                    : analysisStatus === 'failed'
+                      ? 'AI ANALYSIS UNAVAILABLE'
+                      : 'AI ANALYSIS MOCK'}
+                </span>
                 <strong>{detectedCount}銘柄を検出</strong>
                 <small>売り切れ候補 {soldOutCount}件</small>
               </div>
@@ -191,7 +280,11 @@ export default function PhotoReportFlow({
             <div className="review-heading">
               <div>
                 <h3>解析候補を確認</h3>
-                <p>間違いがあれば公開前に修正できます。</p>
+                <p>
+                  {analysisStatus === 'failed'
+                    ? 'AI判定ができなかったため、内容を確認して手動で選択してください。'
+                    : '間違いがあれば公開前に修正できます。'}
+                </p>
               </div>
               <span>編集可能</span>
             </div>
@@ -199,12 +292,18 @@ export default function PhotoReportFlow({
             <div className="detected-products">
               {products.map((product) => {
                 const status = statuses[product.id] ?? 'unknown'
+                const confidence = confidenceByProduct[product.id]
                 return (
                   <label className="detected-row" key={product.id}>
                     <span className="detected-emoji">{product.emoji}</span>
                     <span className="detected-name">
                       <strong>{product.shortName}</strong>
-                      <small>{product.name}</small>
+                      <small>
+                        {product.name}
+                        {analysisStatus === 'ai' && confidence !== undefined
+                          ? ` ・信頼度${Math.round(confidence * 100)}%`
+                          : ''}
+                      </small>
                     </span>
                     <select
                       className={`status-select select-${status}`}
@@ -225,6 +324,14 @@ export default function PhotoReportFlow({
                 )
               })}
             </div>
+
+            {unregisteredCandidates.length > 0 && (
+              <p className="mock-notice">
+                <AlertCircle size={14} /> 未登録の商品も検出されました: {unregisteredCandidates
+                  .map((candidate) => `${candidate.detectedName}(推定${Math.round(candidate.confidence * 100)}%)`)
+                  .join('、')}
+              </p>
+            )}
 
             <label className="experience-toggle">
               <input

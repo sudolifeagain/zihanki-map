@@ -16,5 +16,21 @@
       "database_id": "7388e76c-f12e-452d-8cbd-6bab7f0c187b",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PHOTOS",
+      // `wrangler r2 bucket create zihanki-map-photos` を実行してから
+      // `npm run deploy` する。ローカル開発はローカルR2エミュレーションで動く。
+      "bucket_name": "zihanki-map-photos"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    // 運用者が不在の間、本番の投稿書き込みだけを一時停止する目印。
+    // ローカル開発は .dev.vars で "false" に上書きしている。
+    "WRITES_PAUSED": "true"
+  }
 }

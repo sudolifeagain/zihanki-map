@@ -1018,6 +1018,22 @@ input:focus-visible {
 
 .mock-notice svg { flex: none; margin-top: 1px; }
 
+.photo-error {
+  margin: 0;
+  padding: 10px 11px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  border-radius: 9px;
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.photo-error svg { flex: none; margin-top: 1px; }
+
 .analyzing-step {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -3,8 +3,10 @@ dist
 .env
 .env.*
 !.env.example
+.dev.vars
 .DS_Store
 *.local
 coverage
 .vite
 .wrangler
+.playwright-mcp

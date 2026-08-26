@@ -4,8 +4,12 @@ import type {
   ProductId,
   StockStatus,
 } from '../src/types'
+import { analyzePhoto } from './analysis'
 import {
+  getPhoto,
+  getPhotoObjectKey,
   insertExperience,
+  insertPhoto,
   insertReports,
   listExperiences,
   listMachines,
@@ -13,8 +17,10 @@ import {
   listProducts,
   listReports,
   machineExists,
+  photoExists,
 } from './db'
 import type { Env } from './env'
+import { ALLOWED_PHOTO_TYPES, MAX_PHOTO_BYTES, putPhotoObject } from './photos'
 import { resolveSessionId, sessionSetCookieHeader } from './session'
 
 const REPORT_STATUSES = new Set<StockStatus>(['available', 'low', 'sold_out'])
@@ -98,6 +104,16 @@ async function handlePostReports(
   const statuses = body.statuses
   if (!isRecord(statuses)) return errorResponse(400, 'statuses_required')
 
+  const photoId = body.photoId
+  if (photoId !== undefined) {
+    if (typeof photoId !== 'string' || !photoId) {
+      return errorResponse(400, 'invalid_photo_id')
+    }
+    if (!(await photoExists(env.DB, photoId))) {
+      return errorResponse(404, 'photo_not_found')
+    }
+  }
+
   const validProductIds = await listProductIds(env.DB)
   const entries: { productId: ProductId; status: Exclude<StockStatus, 'unknown'> }[] = []
   for (const [productId, status] of Object.entries(statuses)) {
@@ -113,7 +129,13 @@ async function handlePostReports(
 
   if (entries.length === 0) return errorResponse(400, 'no_reportable_statuses')
 
-  const reports = await insertReports(env.DB, machineId, entries, sessionId)
+  const reports = await insertReports(
+    env.DB,
+    machineId,
+    entries,
+    sessionId,
+    typeof photoId === 'string' ? photoId : undefined,
+  )
   return json({ reports }, 201)
 }
 
@@ -164,6 +186,86 @@ async function handlePostExperiences(
   return json({ experience }, 201)
 }
 
+async function handlePostPhoto(
+  env: Env,
+  request: Request,
+  sessionId: string,
+): Promise<Response> {
+  let form: FormData
+  try {
+    form = await request.formData()
+  } catch {
+    return errorResponse(400, 'invalid_form')
+  }
+
+  const machineId = form.get('machineId')
+  if (typeof machineId !== 'string' || !machineId) {
+    return errorResponse(400, 'machineId_required')
+  }
+  if (!(await machineExists(env.DB, machineId))) {
+    return errorResponse(404, 'machine_not_found')
+  }
+
+  const file = form.get('file')
+  if (!(file instanceof File)) {
+    return errorResponse(400, 'file_required')
+  }
+  if (!ALLOWED_PHOTO_TYPES.has(file.type)) {
+    return errorResponse(400, 'unsupported_type')
+  }
+  if (file.size > MAX_PHOTO_BYTES) {
+    return errorResponse(400, 'file_too_large')
+  }
+  if (file.size === 0) {
+    return errorResponse(400, 'file_empty')
+  }
+
+  const id = crypto.randomUUID()
+  const bytes = await file.arrayBuffer()
+  const objectKey = await putPhotoObject(env.PHOTOS, machineId, id, file.type, bytes)
+
+  const photo = await insertPhoto(
+    env.DB,
+    { machineId, objectKey, contentType: file.type, sizeBytes: file.size },
+    sessionId,
+  )
+  return json({ photo }, 201)
+}
+
+async function handleGetPhoto(env: Env, photoId: string): Promise<Response> {
+  const objectKey = await getPhotoObjectKey(env.DB, photoId)
+  if (!objectKey) return errorResponse(404, 'photo_not_found')
+
+  const object = await env.PHOTOS.get(objectKey)
+  if (!object) return errorResponse(404, 'photo_not_found')
+
+  return new Response(object.body, {
+    headers: {
+      'content-type': object.httpMetadata?.contentType ?? 'application/octet-stream',
+      'cache-control': 'public, max-age=31536000, immutable',
+    },
+  })
+}
+
+async function handlePostAnalyze(env: Env, photoId: string): Promise<Response> {
+  const photo = await getPhoto(env.DB, photoId)
+  if (!photo) return errorResponse(404, 'photo_not_found')
+
+  const object = await env.PHOTOS.get(photo.objectKey)
+  if (!object) return errorResponse(404, 'photo_not_found')
+
+  const products = await listProducts(env.DB)
+
+  try {
+    const bytes = await object.arrayBuffer()
+    const candidates = await analyzePhoto(env, bytes, photo.contentType, photo.machineId, products)
+    return json({ candidates })
+  } catch (error) {
+    console.error('ai_analysis_error', error)
+    return errorResponse(502, 'ai_analysis_failed')
+  }
+}
+
 async function routeApi(
   request: Request,
   env: Env,
@@ -171,6 +273,10 @@ async function routeApi(
   sessionId: string,
 ): Promise<Response> {
   const { pathname } = url
+
+  if (env.WRITES_PAUSED === 'true' && request.method === 'POST') {
+    return errorResponse(503, 'writes_paused')
+  }
 
   if (pathname === '/api/machines' && request.method === 'GET') {
     return handleGetMachines(env)
@@ -186,6 +292,17 @@ async function routeApi(
   }
   if (pathname === '/api/experiences' && request.method === 'POST') {
     return handlePostExperiences(env, request, sessionId)
+  }
+  if (pathname === '/api/photos' && request.method === 'POST') {
+    return handlePostPhoto(env, request, sessionId)
+  }
+  if (pathname.startsWith('/api/photos/') && pathname.endsWith('/analyze') && request.method === 'POST') {
+    const photoId = pathname.slice('/api/photos/'.length, -'/analyze'.length)
+    if (photoId) return handlePostAnalyze(env, photoId)
+  }
+  if (pathname.startsWith('/api/photos/') && request.method === 'GET') {
+    const photoId = pathname.slice('/api/photos/'.length)
+    if (photoId) return handleGetPhoto(env, photoId)
   }
 
   return errorResponse(404, 'not_found')

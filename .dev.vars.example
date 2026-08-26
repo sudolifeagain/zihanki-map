@@ -1,0 +1,3 @@
+# ローカル開発では投稿の書き込みをブロックしない。
+# コピーして .dev.vars として使う(.dev.vars はコミットしない)。
+WRITES_PAUSED=false
