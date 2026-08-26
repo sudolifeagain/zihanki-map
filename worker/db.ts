@@ -312,3 +312,54 @@ export async function insertExperience(
     observedAt,
   }
 }
+
+export interface EventRow {
+  id: string
+  name: string
+  startsAt: string
+  endsAt: string
+}
+
+export interface SalesActualRow {
+  machineId: string
+  productId: ProductId
+  observedOn: string
+  unitsSold: number
+  restockUnits: number
+}
+
+export async function listEvents(db: D1Database): Promise<EventRow[]> {
+  const { results } = await db
+    .prepare('SELECT id, name, starts_at, ends_at FROM events ORDER BY starts_at DESC')
+    .all<{ id: string; name: string; starts_at: string; ends_at: string }>()
+
+  return results.map((row) => ({
+    id: row.id,
+    name: row.name,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+  }))
+}
+
+export async function listSalesActuals(db: D1Database): Promise<SalesActualRow[]> {
+  const { results } = await db
+    .prepare(
+      'SELECT machine_id, product_id, observed_on, units_sold, restock_units ' +
+        'FROM sales_actuals ORDER BY observed_on DESC',
+    )
+    .all<{
+      machine_id: string
+      product_id: string
+      observed_on: string
+      units_sold: number
+      restock_units: number
+    }>()
+
+  return results.map((row) => ({
+    machineId: row.machine_id,
+    productId: row.product_id as ProductId,
+    observedOn: row.observed_on,
+    unitsSold: row.units_sold,
+    restockUnits: row.restock_units,
+  }))
+}

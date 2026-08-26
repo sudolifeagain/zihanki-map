@@ -1,3 +1,4 @@
+import type { AnalyticsEvent, SalesActual } from './analytics'
 import type {
   ExperienceOutcome,
   ExperienceReason,
@@ -80,6 +81,13 @@ export async function uploadPhoto(
   form.append('machineId', machineId)
   form.append('file', file)
   return request('/api/photos', { method: 'POST', body: form })
+}
+
+export async function fetchAnalytics(): Promise<{
+  events: AnalyticsEvent[]
+  actuals: SalesActual[]
+}> {
+  return request('/api/analytics')
 }
 
 export interface GeocodedPlace {

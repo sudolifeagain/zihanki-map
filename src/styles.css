@@ -2136,3 +2136,158 @@ input:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---- ベンダー分析(フィルター・実測突合・内訳) ---- */
+
+.insights-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 22px 0 20px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--paper);
+}
+
+.insights-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.insights-filters span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.insights-filters select,
+.insights-filters input {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: white;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 推定値は根拠を必ず添える。 */
+.estimate-note {
+  color: #a36a10 !important;
+  font-weight: 700;
+}
+
+.estimate-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 22px;
+  padding: 12px 14px;
+  border: 1px solid #f0dcb4;
+  border-radius: 12px;
+  background: #fdf6e7;
+  color: #8a5f11;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.estimate-banner svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.insight-table-wrap {
+  overflow-x: auto;
+}
+
+.insight-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.insight-table th {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 9px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* 見出しの「実測 / 推定」バッジ。 */
+.insight-table th small {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #edf0ed;
+  color: #6b726d;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.insight-table td {
+  padding: 9px 6px;
+  border-bottom: 1px solid #f2efe9;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.insight-table td strong {
+  display: block;
+  font-size: 11px;
+}
+
+.insight-table td small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.breakdown-list {
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.breakdown-list li {
+  display: grid;
+  grid-template-columns: minmax(96px, 34%) 1fr auto;
+  align-items: center;
+  gap: 9px;
+  font-size: 10px;
+}
+
+.breakdown-bar {
+  height: 7px;
+  border-radius: 999px;
+  background: #eef1ee;
+  overflow: hidden;
+}
+
+.breakdown-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--orange);
+}
+
+.breakdown-list b {
+  font-size: 11px;
+  min-width: 20px;
+  text-align: right;
+}
+
+.breakdown-subhead {
+  margin: 16px 0 8px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+}

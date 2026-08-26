@@ -71,10 +71,10 @@ function parseCsv(text) {
   )
 }
 
-function readCsv(name) {
+function readCsv(name, { allowEmpty = false } = {}) {
   const path = join('data', name)
   const rows = parseCsv(readFileSync(path, 'utf8'))
-  if (rows.length === 0) throw new Error(`${path} に行がありません`)
+  if (rows.length === 0 && !allowEmpty) throw new Error(`${path} に行がありません`)
   return rows
 }
 
@@ -218,14 +218,77 @@ function buildStatements() {
     )
   }
 
-  return { statements, counts: { products: products.length, machines: machines.length, links: links.length } }
+  const events = readCsv('events.csv', { allowEmpty: true }).map((row, index) => {
+    const line = `events.csv 行${index + 2}`
+    for (const column of ['id', 'name', 'starts_at', 'ends_at']) {
+      if (!row[column]) throw new Error(`${line}: ${column} が空です`)
+    }
+    if (Number.isNaN(Date.parse(row.starts_at)) || Number.isNaN(Date.parse(row.ends_at))) {
+      throw new Error(`${line}: starts_at / ends_at はISO 8601形式にしてください`)
+    }
+    if (Date.parse(row.ends_at) <= Date.parse(row.starts_at)) {
+      throw new Error(`${line}: ends_at が starts_at より後になっていません`)
+    }
+    return row
+  })
+
+  // 実測値は空でもよい。無ければ画面上すべて「推定」と表示される。
+  const actuals = readCsv('sales_actuals.csv', { allowEmpty: true }).map((row, index) => {
+    const line = `sales_actuals.csv 行${index + 2}`
+    if (!machineIds.has(row.machine_id)) {
+      throw new Error(`${line}: 未登録の machine_id (${row.machine_id})`)
+    }
+    if (!productIds.has(row.product_id)) {
+      throw new Error(`${line}: 未登録の product_id (${row.product_id})`)
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(row.observed_on)) {
+      throw new Error(`${line}: observed_on は YYYY-MM-DD 形式にしてください (${row.observed_on})`)
+    }
+    return row
+  })
+
+  for (const event of events) {
+    statements.push(
+      `INSERT INTO events (id, name, starts_at, ends_at) VALUES (` +
+        [sqlText(event.id), sqlText(event.name), sqlText(event.starts_at), sqlText(event.ends_at)].join(', ') +
+        `) ON CONFLICT(id) DO UPDATE SET name = excluded.name, starts_at = excluded.starts_at, ` +
+        `ends_at = excluded.ends_at;`,
+    )
+  }
+
+  for (const actual of actuals) {
+    statements.push(
+      `INSERT INTO sales_actuals (machine_id, product_id, observed_on, units_sold, restock_units) VALUES (` +
+        [
+          sqlText(actual.machine_id),
+          sqlText(actual.product_id),
+          sqlText(actual.observed_on),
+          sqlNumber(actual.units_sold || '0', `sales_actuals.csv ${actual.machine_id}: units_sold`),
+          sqlNumber(actual.restock_units || '0', `sales_actuals.csv ${actual.machine_id}: restock_units`),
+        ].join(', ') +
+        `) ON CONFLICT(machine_id, product_id, observed_on) DO UPDATE SET ` +
+        `units_sold = excluded.units_sold, restock_units = excluded.restock_units;`,
+    )
+  }
+
+  return {
+    statements,
+    counts: {
+      products: products.length,
+      machines: machines.length,
+      links: links.length,
+      events: events.length,
+      actuals: actuals.length,
+    },
+  }
 }
 
 const { statements, counts } = buildStatements()
 const sql = `${statements.join('\n')}\n`
 
 console.log(
-  `商品 ${counts.products}件 / 自販機 ${counts.machines}件 / 取扱 ${counts.links}件 を取り込みます` +
+  `商品 ${counts.products}件 / 自販機 ${counts.machines}件 / 取扱 ${counts.links}件 / ` +
+    `イベント ${counts.events}件 / 実測 ${counts.actuals}件 を取り込みます` +
     ` (${isRemote ? '本番' : 'ローカル'}D1)`,
 )
 

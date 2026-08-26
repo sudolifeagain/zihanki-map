@@ -20,6 +20,7 @@ import MapView from './components/MapView'
 import PhotoReportFlow from './components/PhotoReportFlow'
 import {
   ApiError,
+  fetchAnalytics,
   fetchExperiences,
   fetchMachines,
   fetchReports,
@@ -37,6 +38,7 @@ import {
   rankMachines,
 } from './domain'
 import type { LatLng } from './domain'
+import type { AnalyticsEvent, SalesActual } from './analytics'
 import type {
   InventoryReport,
   Product,
@@ -133,6 +135,8 @@ function App() {
   const [products, setProducts] = useState<Product[]>([])
   const [reports, setReports] = useState<InventoryReport[]>([])
   const [experiences, setExperiences] = useState<PurchaseExperience[]>([])
+  const [events, setEvents] = useState<AnalyticsEvent[]>([])
+  const [actuals, setActuals] = useState<SalesActual[]>([])
   const [selectedProductId, setSelectedProductId] = useState<ProductId>('water')
   const [selectedMachineId, setSelectedMachineId] = useState('east-entrance')
   const [brandQuery, setBrandQuery] = useState('')
@@ -150,15 +154,18 @@ function App() {
   const loadAll = useCallback(async () => {
     setDataStatus('loading')
     try {
-      const [machinesRes, reportsRes, experiencesRes] = await Promise.all([
+      const [machinesRes, reportsRes, experiencesRes, analyticsRes] = await Promise.all([
         fetchMachines(),
         fetchReports(),
         fetchExperiences(),
+        fetchAnalytics(),
       ])
       setMachines(machinesRes.machines)
       setProducts(machinesRes.products)
       setReports(reportsRes.reports)
       setExperiences(experiencesRes.experiences)
+      setEvents(analyticsRes.events)
+      setActuals(analyticsRes.actuals)
       setDataStatus('ready')
     } catch {
       setDataStatus('error')
@@ -566,6 +573,8 @@ function App() {
           experiences={experiences}
           machines={machines}
           products={products}
+          events={events}
+          actuals={actuals}
         />
       )}
 

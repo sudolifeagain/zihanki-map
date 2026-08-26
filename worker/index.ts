@@ -8,6 +8,8 @@ import { analyzePhoto } from './analysis'
 import {
   getPhoto,
   getPhotoObjectKey,
+  listEvents,
+  listSalesActuals,
   insertExperience,
   insertPhoto,
   insertReports,
@@ -261,6 +263,14 @@ async function handleGetPhoto(env: Env, photoId: string): Promise<Response> {
   })
 }
 
+async function handleGetAnalytics(env: Env): Promise<Response> {
+  const [events, actuals] = await Promise.all([
+    listEvents(env.DB),
+    listSalesActuals(env.DB),
+  ])
+  return json({ events, actuals })
+}
+
 async function handleGetGeocode(env: Env, url: URL): Promise<Response> {
   const query = url.searchParams.get('q')
   if (!query || !query.trim()) return errorResponse(400, 'query_required')
@@ -315,6 +325,9 @@ async function routeApi(
   }
   if (pathname === '/api/geocode' && request.method === 'GET') {
     return handleGetGeocode(env, url)
+  }
+  if (pathname === '/api/analytics' && request.method === 'GET') {
+    return handleGetAnalytics(env)
   }
   if (pathname === '/api/reports' && request.method === 'GET') {
     return handleGetReports(env, url)
