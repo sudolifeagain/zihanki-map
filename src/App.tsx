@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  AlertTriangle,
   BarChart3,
   Camera,
   CheckCircle2,
@@ -10,13 +11,14 @@ import {
   Map as MapIcon,
   MapPin,
   Navigation,
+  RefreshCw,
   Search,
   Sparkles,
 } from 'lucide-react'
 import InsightsView from './components/InsightsView'
 import MapView from './components/MapView'
 import PhotoReportFlow from './components/PhotoReportFlow'
-import { machines, products, seedReports } from './data/demo'
+import { fetchExperiences, fetchMachines, fetchReports, postExperience, postReports } from './api'
 import {
   deriveStockStatus,
   findAlternatives,
@@ -25,12 +27,15 @@ import {
 } from './domain'
 import type {
   InventoryReport,
+  Product,
   ProductId,
   PurchaseExperience,
   StockStatus,
+  VendingMachine,
 } from './types'
 
 type View = 'map' | 'insights'
+type DataStatus = 'loading' | 'ready' | 'error'
 
 const statusCopy: Record<StockStatus, { label: string; detail: string }> = {
   available: { label: '在庫あり', detail: '買える可能性が高い' },
@@ -39,37 +44,82 @@ const statusCopy: Record<StockStatus, { label: string; detail: string }> = {
   unknown: { label: '未確認', detail: '最近の投稿がありません' },
 }
 
-function loadReports(): InventoryReport[] {
-  try {
-    const saved = localStorage.getItem('nomitai-reports')
-    if (saved) return [...(JSON.parse(saved) as InventoryReport[]), ...seedReports]
-  } catch {
-    // 壊れたデモデータは無視して初期状態に戻す。
-  }
-  return seedReports
-}
-
-function loadExperiences(): PurchaseExperience[] {
-  try {
-    const saved = localStorage.getItem('nomitai-experiences')
-    return saved ? (JSON.parse(saved) as PurchaseExperience[]) : []
-  } catch {
-    return []
-  }
-}
-
 function App() {
   const [view, setView] = useState<View>('map')
+  const [dataStatus, setDataStatus] = useState<DataStatus>('loading')
+  const [machines, setMachines] = useState<VendingMachine[]>([])
+  const [products, setProducts] = useState<Product[]>([])
+  const [reports, setReports] = useState<InventoryReport[]>([])
+  const [experiences, setExperiences] = useState<PurchaseExperience[]>([])
   const [selectedProductId, setSelectedProductId] = useState<ProductId>('water')
   const [selectedMachineId, setSelectedMachineId] = useState('east-entrance')
-  const [reports, setReports] = useState<InventoryReport[]>(loadReports)
-  const [experiences, setExperiences] =
-    useState<PurchaseExperience[]>(loadExperiences)
   const [brandQuery, setBrandQuery] = useState('')
   const [locationQuery, setLocationQuery] = useState('東京ビッグサイト')
   const [isPhotoFlowOpen, setIsPhotoFlowOpen] = useState(false)
   const [points, setPoints] = useState(120)
   const [toast, setToast] = useState('')
+
+  const loadAll = useCallback(async () => {
+    setDataStatus('loading')
+    try {
+      const [machinesRes, reportsRes, experiencesRes] = await Promise.all([
+        fetchMachines(),
+        fetchReports(),
+        fetchExperiences(),
+      ])
+      setMachines(machinesRes.machines)
+      setProducts(machinesRes.products)
+      setReports(reportsRes.reports)
+      setExperiences(experiencesRes.experiences)
+      setDataStatus('ready')
+    } catch {
+      setDataStatus('error')
+    }
+  }, [])
+
+  useEffect(() => {
+    loadAll()
+  }, [loadAll])
+
+  const filteredProducts = useMemo(() => {
+    const normalized = brandQuery.trim().toLowerCase()
+    if (!normalized) return products
+    return products.filter((product) =>
+      `${product.name} ${product.shortName} ${product.brand}`
+        .toLowerCase()
+        .includes(normalized),
+    )
+  }, [products, brandQuery])
+
+  useEffect(() => {
+    if (!toast) return
+    const timer = window.setTimeout(() => setToast(''), 2800)
+    return () => window.clearTimeout(timer)
+  }, [toast])
+
+  if (dataStatus !== 'ready') {
+    return (
+      <div className="app-shell status-shell">
+        <div className="status-card">
+          {dataStatus === 'loading' ? (
+            <>
+              <span className="status-spinner" aria-hidden="true" />
+              <strong>自販機データを読み込んでいます…</strong>
+            </>
+          ) : (
+            <>
+              <span className="status-icon"><AlertTriangle size={22} /></span>
+              <strong>データを読み込めませんでした</strong>
+              <p>通信状況を確認して、もう一度お試しください。</p>
+              <button className="primary-action" onClick={loadAll}>
+                <RefreshCw size={16} /> 再読み込み
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   const selectedProduct = products.find(
     (product) => product.id === selectedProductId,
@@ -94,69 +144,37 @@ function App() {
     selectedMachineId,
   )
 
-  const filteredProducts = useMemo(() => {
-    const normalized = brandQuery.trim().toLowerCase()
-    if (!normalized) return products
-    return products.filter((product) =>
-      `${product.name} ${product.shortName} ${product.brand}`
-        .toLowerCase()
-        .includes(normalized),
-    )
-  }, [brandQuery])
-
-  useEffect(() => {
-    if (!toast) return
-    const timer = window.setTimeout(() => setToast(''), 2800)
-    return () => window.clearTimeout(timer)
-  }, [toast])
-
   const searchLocation = () => {
     const normalized = locationQuery.trim()
     if (!normalized) setLocationQuery('東京ビッグサイト')
     setToast('東京ビッグサイト周辺の登録済み自販機を表示しました')
   }
 
-  const publishPhotoReport = (
+  const publishPhotoReport = async (
     statuses: Partial<Record<ProductId, StockStatus>>,
     experience?: Omit<PurchaseExperience, 'id' | 'machineId' | 'observedAt'>,
   ) => {
-    const observedAt = new Date().toISOString()
-    const statusReports = Object.entries(statuses)
-      .filter(
-        (entry): entry is [ProductId, Exclude<StockStatus, 'unknown'>] =>
-          entry[1] !== 'unknown',
+    try {
+      const { reports: newReports } = await postReports(
+        selectedMachineId,
+        statuses,
       )
-      .map(([productId, status], index): InventoryReport => ({
-        id: `photo-${Date.now()}-${index}`,
-        machineId: selectedMachineId,
-        productId,
-        type: status,
-        observedAt,
-        source: 'user',
-      }))
+      setReports((current) => [...newReports, ...current])
 
-    const userReports = [
-      ...statusReports,
-      ...reports.filter((report) => report.source === 'user'),
-    ]
-    localStorage.setItem('nomitai-reports', JSON.stringify(userReports))
-    setReports([...statusReports, ...reports])
-
-    if (experience) {
-      const newExperience: PurchaseExperience = {
-        ...experience,
-        id: `experience-${Date.now()}`,
-        machineId: selectedMachineId,
-        observedAt,
+      if (experience) {
+        const { experience: newExperience } = await postExperience({
+          machineId: selectedMachineId,
+          ...experience,
+        })
+        setExperiences((current) => [newExperience, ...current])
       }
-      const nextExperiences = [newExperience, ...experiences]
-      localStorage.setItem('nomitai-experiences', JSON.stringify(nextExperiences))
-      setExperiences(nextExperiences)
-    }
 
-    setPoints((current) => current + 10)
-    setIsPhotoFlowOpen(false)
-    setToast('写真から商品ラインナップを更新しました +10pt')
+      setPoints((current) => current + 10)
+      setIsPhotoFlowOpen(false)
+      setToast('写真から商品ラインナップを更新しました +10pt')
+    } catch {
+      setToast('投稿を送信できませんでした。もう一度お試しください')
+    }
   }
 
   return (

@@ -27,7 +27,7 @@ interface PhotoReportFlowProps {
   onPublish: (
     statuses: Partial<Record<ProductId, StockStatus>>,
     experience?: Omit<PurchaseExperience, 'id' | 'machineId' | 'observedAt'>,
-  ) => void
+  ) => Promise<void>
 }
 
 type Step = 'upload' | 'analyzing' | 'review'
@@ -47,6 +47,7 @@ export default function PhotoReportFlow({
   onPublish,
 }: PhotoReportFlowProps) {
   const [step, setStep] = useState<Step>('upload')
+  const [isPublishing, setIsPublishing] = useState(false)
   const [uploadedImage, setUploadedImage] = useState<string>()
   const [hasExperience, setHasExperience] = useState(false)
   const [wantedProductId, setWantedProductId] = useState(initialProductId)
@@ -84,13 +85,18 @@ export default function PhotoReportFlow({
     window.setTimeout(() => setStep('review'), 1800)
   }
 
-  const publish = () => {
-    onPublish(
-      statuses,
-      hasExperience
-        ? { wantedProductId, reason, outcome }
-        : undefined,
-    )
+  const publish = async () => {
+    setIsPublishing(true)
+    try {
+      await onPublish(
+        statuses,
+        hasExperience
+          ? { wantedProductId, reason, outcome }
+          : undefined,
+      )
+    } finally {
+      setIsPublishing(false)
+    }
   }
 
   return (
@@ -271,8 +277,8 @@ export default function PhotoReportFlow({
                 <strong>投稿で +10 pt</strong>
                 <small>最終確認時刻を「たった今」に更新</small>
               </div>
-              <button className="primary-action" onClick={publish}>
-                <CheckCircle2 size={18} /> この内容で公開
+              <button className="primary-action" onClick={publish} disabled={isPublishing}>
+                <CheckCircle2 size={18} /> {isPublishing ? '公開中…' : 'この内容で公開'}
               </button>
             </div>
           </div>
