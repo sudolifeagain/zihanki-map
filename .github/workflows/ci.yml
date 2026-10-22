@@ -1,22 +1,44 @@
+# Qualified official Node 24.22.1 image, pinned by digest.
+# Install together with zihanki-native-ci-isolate.mjs as .github/ci/isolate.mjs.
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
-
+    branches: [main]
 permissions:
   contents: read
-
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - name: Read the supervisor from the trusted base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted-ci
+          persist-credentials: false
+          fetch-depth: 1
+          submodules: false
+          lfs: false
+      - name: Read candidate data without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          persist-credentials: false
+          fetch-depth: 1
+          submodules: false
+          lfs: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 24.22.1
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
+          package-manager-cache: false
+      - name: Install without hooks; test and build without network or credentials
+        env:
+          SUBJECT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          ISOLATED_NODE_IMAGE: node@sha256:2dd9a4f758e173b65fee15388f7706af6fb01ef50cf7a2c0538711d67a6981ae
+        run: node trusted-ci/.github/ci/isolate.mjs candidate
